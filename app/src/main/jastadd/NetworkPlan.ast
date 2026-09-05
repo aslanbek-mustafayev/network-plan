@@ -1,0 +1,9 @@
+NetworkPlan ::= <Name:String> Activity* Dependency*;
+
+Activity ::=
+    <Name:String>
+    <Duration:Integer>;
+
+Dependency ::=
+    <SourceName:String>
+    <TargetName:String>;

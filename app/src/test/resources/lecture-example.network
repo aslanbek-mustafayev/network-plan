@@ -1,0 +1,21 @@
+project LectureExample {
+    activity A duration 10;
+    activity B duration 20;
+    activity C duration 5;
+    activity D duration 10;
+    activity E duration 20;
+    activity F duration 15;
+    activity G duration 5;
+    activity H duration 15;
+
+    dependency A -> B;
+    dependency B -> C;
+    dependency C -> D;
+    dependency D -> E;
+    dependency A -> F;
+    dependency F -> G;
+    dependency C -> G;
+    dependency G -> E;
+    dependency A -> H;
+    dependency H -> E;
+}

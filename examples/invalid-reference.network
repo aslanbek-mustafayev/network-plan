@@ -1,0 +1,6 @@
+project InvalidReference {
+    activity A duration 10;
+    activity B duration 20;
+    dependency A -> B;
+    dependency B -> X;
+}

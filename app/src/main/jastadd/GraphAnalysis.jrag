@@ -1,0 +1,117 @@
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.TreeMap;
+
+aspect GraphAnalysis {
+    inh NetworkPlan Activity.networkPlan();
+    eq NetworkPlan.getActivity(int i).networkPlan() = this;
+
+    /** Remembers declaration order of each activity, used to keep results deterministic. */
+    syn lazy Map<Activity, Integer> NetworkPlan.activityOrder() {
+        Map<Activity, Integer> result = new LinkedHashMap<Activity, Integer>();
+        for (int index = 0; index < getNumActivity(); index++) {
+            result.put(getActivity(index), index);
+        }
+        return Collections.unmodifiableMap(result);
+    }
+
+    /**
+     * Adjacency list for every activity. 
+     * Basically maps each vertex (node) to a list of all other vertices it directly connects to.
+     *
+     * @param forward {@code true} for successors, {@code false} for predecessors
+     */
+    private Map<Activity, List<Activity>> NetworkPlan.neighbourIndex(boolean forward) {
+        Map<Activity, TreeMap<Integer, Activity>> ordered = new LinkedHashMap<Activity, TreeMap<Integer, Activity>>();
+        for (Activity activity : getActivityList()) {
+            ordered.put(activity, new TreeMap<Integer, Activity>());
+        }
+
+        for (Dependency dependency : getDependencyList()) {
+            Activity source = dependency.source();
+            Activity target = dependency.target();
+            if (source == null || target == null || source == target) {
+                continue;
+            }
+            Activity from = forward ? source : target;
+            Activity to = forward ? target : source;
+            ordered.get(from).put(activityOrder().get(to), to);
+        }
+
+        Map<Activity, List<Activity>> result = new LinkedHashMap<Activity, List<Activity>>();
+        for (Activity activity : getActivityList()) {
+            result.put(activity, List.copyOf(ordered.get(activity).values()));
+        }
+        return Collections.unmodifiableMap(result);
+    }
+
+    syn lazy Map<Activity, List<Activity>> NetworkPlan.successorIndex() = neighbourIndex(true);
+
+    syn lazy Map<Activity, List<Activity>> NetworkPlan.predecessorIndex() = neighbourIndex(false);
+
+    syn lazy List<Activity> Activity.predecessors() = networkPlan().predecessorIndex().get(this);
+
+    syn lazy List<Activity> Activity.successors() = networkPlan().successorIndex().get(this);
+
+    syn lazy boolean Activity.isSource() = predecessors().isEmpty();
+    syn lazy boolean Activity.isSink() = successors().isEmpty();
+
+    syn lazy List<Activity> NetworkPlan.sources() {
+        List<Activity> result = new ArrayList<Activity>();
+        for (Activity activity : getActivityList()) {
+            if (activity.isSource()) {
+                result.add(activity);
+            }
+        }
+        return Collections.unmodifiableList(result);
+    }
+
+    syn lazy List<Activity> NetworkPlan.sinks() {
+        List<Activity> result = new ArrayList<Activity>();
+        for (Activity activity : getActivityList()) {
+            if (activity.isSink()) {
+                result.add(activity);
+            }
+        }
+        return Collections.unmodifiableList(result);
+    }
+
+    /** The unique source, or {@code null} when the plan has zero or several. */
+    syn lazy Activity NetworkPlan.source() = sources().size() == 1 ? sources().get(0) : null;
+
+    /** The unique sink, or {@code null} when the plan has zero or several. */
+    syn lazy Activity NetworkPlan.sink() = sinks().size() == 1 ? sinks().get(0) : null;
+
+    /**
+     * Kahn topological sort, releasing ready activities in declaration order
+     * so that equal-priority activities always come out the same way.
+     */
+    syn lazy List<Activity> NetworkPlan.topologicalOrder() {
+        Map<Activity, Integer> indegrees = new LinkedHashMap<Activity, Integer>();
+        TreeMap<Integer, Activity> ready = new TreeMap<Integer, Activity>();
+        for (Activity activity : getActivityList()) {
+            int indegree = activity.predecessors().size();
+            indegrees.put(activity, indegree);
+            if (indegree == 0) {
+                ready.put(activityOrder().get(activity), activity);
+            }
+        }
+
+        List<Activity> result = new ArrayList<Activity>();
+        while (!ready.isEmpty()) {
+            Activity activity = ready.pollFirstEntry().getValue();
+            result.add(activity);
+            for (Activity successor : activity.successors()) {
+                int remaining = indegrees.get(successor) - 1;
+                indegrees.put(successor, remaining);
+                if (remaining == 0) {
+                    ready.put(activityOrder().get(successor), successor);
+                }
+            }
+        }
+        return Collections.unmodifiableList(result);
+    }
+}

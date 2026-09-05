@@ -1,0 +1,39 @@
+%package "de.networkplan.parser";
+%class "NetworkParser";
+
+%import "de.networkplan.ast.NetworkPlan",
+        "de.networkplan.ast.Activity",
+        "de.networkplan.ast.Dependency",
+        "de.networkplan.ast.PlanList";
+
+%terminals PROJECT, ACTIVITY, DURATION, DEPENDENCY, ID, INTEGER, ARROW, SEMICOLON, LBRACE, RBRACE;
+
+%typeof ID = "String";
+%typeof INTEGER = "Integer";
+
+%typeof network = "NetworkPlan";
+%typeof activities = "PlanList<Activity>";
+%typeof dependencies = "PlanList<Dependency>";
+%typeof activity = "Activity";
+%typeof dependency = "Dependency";
+
+%goal network;
+
+network = PROJECT ID.name LBRACE
+      activities.activityList
+      dependencies.dependencyList
+      RBRACE
+      {: return new NetworkPlan(_symbol_name, activityList, dependencyList); :}
+    ;
+
+activities = {: return new PlanList<Activity>();:} 
+    | activities.list activity.value {: return list.add(value); :}
+    ;
+
+dependencies = {: return new PlanList<Dependency>(); :}
+    | dependencies.list dependency.value {: return list.add(value); :}
+    ;
+
+activity = ACTIVITY ID.name DURATION INTEGER.duration SEMICOLON {: return new Activity(_symbol_name, duration); :};
+
+dependency = DEPENDENCY ID.source ARROW ID.target SEMICOLON {: return new Dependency(_symbol_source, _symbol_target); :};

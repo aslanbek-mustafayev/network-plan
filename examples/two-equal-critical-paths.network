@@ -1,0 +1,20 @@
+project TwoEqualCriticalPaths {
+    activity A duration 1;
+    activity B duration 4;
+    activity C duration 3;
+    activity D duration 2;
+    activity E duration 5;
+    activity F duration 2;
+    activity G duration 2;
+    activity H duration 2;
+
+    dependency A -> B;
+    dependency A -> D;
+    dependency A -> F;
+    dependency B -> C;
+    dependency D -> E;
+    dependency F -> G;
+    dependency C -> H;
+    dependency E -> H;
+    dependency G -> H;
+}

@@ -1,0 +1,156 @@
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+
+import de.networkplan.CpmValues;
+
+aspect CpmAnalysis {
+    /**
+     * Evaluates the CPM equations once for the whole plan.
+     *
+     * Forward pass over the topological order fixes earliest times,
+     * the backward pass fixes latest times, and a final pass derives the
+     * four floats. Computing them together keeps the traversal linear.
+     */
+    syn lazy Map<Activity, CpmValues> NetworkPlan.cpmValues() {
+        Map<Activity, Integer> earliestStarts = new LinkedHashMap<Activity, Integer>();
+        Map<Activity, Integer> earliestFinishes = new LinkedHashMap<Activity, Integer>();
+        List<Activity> topology = topologicalOrder();
+
+        for (Activity activity : topology) {
+            int earliestStart = 1;
+            for (Activity predecessor : activity.predecessors()) {
+                earliestStart = Math.max(earliestStart, earliestFinishes.get(predecessor) + 1);
+            }
+            earliestStarts.put(activity, earliestStart);
+            earliestFinishes.put(activity, earliestStart + activity.getDuration() - 1);
+        }
+
+        int projectDuration = earliestFinishes.get(sink());
+        Map<Activity, Integer> latestStarts = new LinkedHashMap<Activity, Integer>();
+        Map<Activity, Integer> latestFinishes = new LinkedHashMap<Activity, Integer>();
+
+        for (int index = topology.size() - 1; index >= 0; index--) {
+            Activity activity = topology.get(index);
+            int latestFinish = projectDuration;
+            for (Activity successor : activity.successors()) {
+                latestFinish = Math.min(latestFinish, latestStarts.get(successor) - 1);
+            }
+            latestFinishes.put(activity, latestFinish);
+            latestStarts.put(activity, latestFinish - activity.getDuration() + 1);
+        }
+
+        Map<Activity, CpmValues> result = new LinkedHashMap<Activity, CpmValues>();
+        for (Activity activity : getActivityList()) {
+            // Latest day this activity may finish without delaying any
+            // successor's earliest start, and earliest day it may start
+            // once every predecessor has taken its own latest finish.
+            int successorBoundary = projectDuration;
+            for (Activity successor : activity.successors()) {
+                successorBoundary = Math.min(successorBoundary, earliestStarts.get(successor) - 1);
+            }
+            int predecessorBoundary = 0;
+            for (Activity predecessor : activity.predecessors()) {
+                predecessorBoundary = Math.max(predecessorBoundary,latestFinishes.get(predecessor));
+            }
+
+            int earliestStart = earliestStarts.get(activity);
+            int earliestFinish = earliestFinishes.get(activity);
+            int latestStart = latestStarts.get(activity);
+            int latestFinish = latestFinishes.get(activity);
+            int totalFloat = latestStart - earliestStart;
+            int freeFloat = successorBoundary - earliestFinish;
+
+            result.put(activity, new CpmValues(
+                earliestStart,
+                earliestFinish,
+                latestStart,
+                latestFinish,
+                totalFloat,
+                freeFloat,
+                totalFloat - freeFloat,
+                Math.max(0, successorBoundary - predecessorBoundary - activity.getDuration())
+            ));
+        }
+        return Collections.unmodifiableMap(result);
+    }
+
+    syn lazy CpmValues Activity.cpm() = networkPlan().cpmValues().get(this);
+
+    syn int Activity.earliestStart() = cpm().earliestStart();
+    syn int Activity.earliestFinish() = cpm().earliestFinish();
+    syn int Activity.latestStart() = cpm().latestStart();
+    syn int Activity.latestFinish() = cpm().latestFinish();
+    syn int Activity.totalFloat() = cpm().totalFloat();
+    syn int Activity.freeFloat() = cpm().freeFloat();
+    syn int Activity.conditionalFloat() = cpm().conditionalFloat();
+    syn int Activity.independentFloat() = cpm().independentFloat();
+
+    syn lazy int NetworkPlan.projectDuration() = cpmValues().get(sink()).earliestFinish();
+
+    syn lazy boolean Activity.isCritical() = totalFloat() == 0;
+
+    /** A dependency is critical when it links two critical activities back to back. */
+    syn lazy boolean Dependency.isCritical() =
+        source() != null
+        && target() != null
+        && source().isCritical()
+        && target().isCritical()
+        && target().earliestStart() == source().earliestFinish() + 1;
+
+    syn lazy List<Activity> NetworkPlan.criticalActivities() {
+        List<Activity> result = new ArrayList<Activity>();
+        for (Activity activity : getActivityList()) {
+            if (activity.isCritical()) {
+                result.add(activity);
+            }
+        }
+        return Collections.unmodifiableList(result);
+    }
+
+    syn lazy List<Dependency> NetworkPlan.criticalDependencies() {
+        List<Dependency> result = new ArrayList<Dependency>();
+        for (Dependency dependency : getDependencyList()) {
+            if (dependency.isCritical()) {
+                result.add(dependency);
+            }
+        }
+        return Collections.unmodifiableList(result);
+    }
+
+    /**
+     * The critical path when it is unique, otherwise an empty list.
+     *
+     * <p>Walking forward from the source, an ambiguous step (two critical
+     * successors) or a dead end means the critical subgraph is not a single
+     * chain, and callers should fall back to the subgraph listing.
+     */
+    syn lazy List<Activity> NetworkPlan.linearCriticalPath() {
+        Activity current = source();
+        if (current == null || sink() == null || !current.isCritical()) {
+            return Collections.emptyList();
+        }
+
+        List<Activity> path = new ArrayList<Activity>();
+        path.add(current);
+        while (current != sink()) {
+            Activity next = null;
+            for (Activity successor : current.successors()) {
+                if (successor.isCritical() && successor.earliestStart() == current.earliestFinish() + 1) {
+                    if (next != null) {
+                        return Collections.emptyList();
+                    }
+                    next = successor;
+                }
+            }
+            if (next == null) {
+                return Collections.emptyList();
+            }
+            current = next;
+            path.add(current);
+        }
+        return Collections.unmodifiableList(path);
+    }
+}

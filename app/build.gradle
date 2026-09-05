@@ -1,0 +1,139 @@
+plugins {
+    id 'application'
+}
+
+repositories {
+    mavenCentral()
+}
+
+configurations {
+    jflex
+    beaverCompiler
+    jastaddCompiler
+}
+
+dependencies {
+    testImplementation libs.junit.jupiter
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+
+    implementation libs.guava
+
+    // JFlex
+    jflex 'de.jflex:jflex:1.9.1'
+
+    // Beaver
+    beaverCompiler 'net.sf.beaver:beaver-cc:0.9.11' //Generates Java parser code from the grammar
+    implementation 'net.sf.beaver:beaver-rt:0.9.11' //Provides runtime for the generated parser
+
+    // JastAdd
+    jastaddCompiler 'org.jastadd:jastadd:2.4.0'
+}
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}
+
+application {
+    mainClass = 'de.networkplan.App'
+}
+
+// The 'run' task defaults its working directory to this subproject (app/),
+// so a relative --args path like "examples/x.network" would resolve to
+// app/examples/x.network instead of the repo-root examples/ directory.
+tasks.named('run', JavaExec) {
+    workingDir = rootProject.projectDir
+}
+
+tasks.named('test') {
+    useJUnitPlatform()
+}
+
+// Generated source directories, populated by the tasks below.
+def generatedLexerDir = layout.buildDirectory.dir('generated/sources/jflex/main')
+def generatedParserDir = layout.buildDirectory.dir('generated/sources/beaver/main')
+def generatedAstDir = layout.buildDirectory.dir('generated/sources/jastadd/main')
+
+def networkFlex = file('src/main/jflex/Network.flex')
+def networkGrammar = file('src/main/beaver/Network.grammar')
+
+def jastaddSources = files(
+    'src/main/jastadd/NetworkPlan.ast',
+    'src/main/jastadd/NameAnalysis.jrag',
+    'src/main/jastadd/SemanticAnalysis.jrag',
+    'src/main/jastadd/GraphAnalysis.jrag',
+    'src/main/jastadd/CpmAnalysis.jrag'
+)
+
+// JFlex generates the lexer from the token specification. Unlike Beaver and
+// JastAdd, JFlex writes its output flat into -d instead of nesting it under
+// the declared package, so -d must already point at the package directory.
+def generatedLexerPackageDir = generatedLexerDir.get().dir('de/networkplan/lexer').asFile
+
+tasks.register('generateLexer', JavaExec) {
+    group = 'build'
+    description = 'Generates the lexer from the JFlex specification.'
+
+    classpath = configurations.jflex
+    mainClass = 'jflex.Main'
+
+    args '--encoding', 'UTF-8', '-d', generatedLexerPackageDir.absolutePath, networkFlex.absolutePath
+
+    inputs.file(networkFlex)
+    outputs.dir(generatedLexerDir)
+}
+
+// Beaver generates the parser from the grammar file.
+tasks.register('generateParser', JavaExec) {
+    group = 'build'
+    description = 'Generates the parser from the Beaver grammar.'
+
+    classpath = configurations.beaverCompiler
+    mainClass = 'beaver.comp.run.Make'
+
+    args '-d', generatedParserDir.get().asFile.absolutePath, networkGrammar.absolutePath
+
+    inputs.file(networkGrammar)
+    outputs.dir(generatedParserDir)
+}
+
+// JastAdd generates the AST.
+tasks.register('generateAst', JavaExec) {
+    group = 'build'
+    description = 'Generates the JastAdd AST classes.'
+
+    classpath = configurations.jastaddCompiler
+    mainClass = 'org.jastadd.JastAdd'
+
+    args(*([
+        '--package=de.networkplan.ast',
+        "--o=${generatedAstDir.get().asFile.absolutePath}",
+        '--beaver',
+        '--safeLazy',
+        '--lineColumnNumbers',
+        // Renamed from JastAdd's default 'List' so java.util.List can be
+        // imported normally in .jrag files instead of always fully qualified.
+        '--List=PlanList'
+    ] + jastaddSources.collect { it.absolutePath }))
+
+    inputs.files(jastaddSources)
+    outputs.dir(generatedAstDir)
+}
+
+// The three tasks above write here, connect their output as Java sources.
+sourceSets {
+    main {
+        java {
+            srcDir generatedLexerDir
+            srcDir generatedParserDir
+            srcDir generatedAstDir
+        }
+    }
+}
+
+tasks.named('compileJava') {
+    dependsOn tasks.named('generateLexer')
+    dependsOn tasks.named('generateParser')
+    dependsOn tasks.named('generateAst')
+}

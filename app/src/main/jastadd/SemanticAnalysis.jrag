@@ -1,0 +1,173 @@
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Set;
+
+aspect SemanticAnalysis {
+    syn lazy boolean Dependency.hasUnresolvedSource() = source() == null;
+    syn lazy boolean Dependency.hasUnresolvedTarget() = target() == null;
+
+    syn lazy boolean NetworkPlan.hasAmbiguousActivityNames() {
+        Set<String> names = new HashSet<String>();
+        for (Activity activity : getActivityList()) {
+            if (!names.add(activity.getName())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    syn lazy boolean NetworkPlan.hasUnresolvedDependencies() {
+        for (Dependency dependency : getDependencyList()) {
+            if (dependency.hasUnresolvedSource()
+                    || dependency.hasUnresolvedTarget()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    syn lazy boolean NetworkPlan.hasSelfDependencies() {
+        for (Dependency dependency : getDependencyList()) {
+            if (dependency.getSourceName()
+                    .equals(dependency.getTargetName())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    syn lazy List<String> NetworkPlan.basicSemanticErrors() {
+        List<String> errors = new ArrayList<String>();
+
+        if (getNumActivity() == 0) {
+            errors.add("Project must contain at least one activity");
+        }
+
+        Set<String> names = new HashSet<String>();
+        Set<String> duplicateNames = new HashSet<String>();
+        for (Activity activity : getActivityList()) {
+            if (activity.getDuration() <= 0) {
+                errors.add("Activity '" + activity.getName()
+                    + "' has non-positive duration "
+                    + activity.getDuration());
+            }
+            if (!names.add(activity.getName()) && duplicateNames.add(activity.getName())) {
+                errors.add("Duplicate activity name '"
+                    + activity.getName() + "'");
+            }
+        }
+
+        Set<String> unknownSources = new HashSet<String>();
+        Set<String> unknownTargets = new HashSet<String>();
+        Set<String> edges = new HashSet<String>();
+        for (Dependency dependency : getDependencyList()) {
+            if (dependency.hasUnresolvedSource() && unknownSources.add(dependency.getSourceName())) {
+                errors.add("Unknown activity '" + dependency.getSourceName() + "' used as dependency source");
+            }
+            if (dependency.hasUnresolvedTarget() && unknownTargets.add(dependency.getTargetName())) {
+                errors.add("Unknown activity '" + dependency.getTargetName() + "' used as dependency target");
+            }
+            if (dependency.getSourceName().equals(dependency.getTargetName())) {
+                errors.add("Activity '" + dependency.getSourceName() + "' cannot depend on itself");
+            }
+            String edge = dependency.getSourceName() + "#" + dependency.getTargetName();
+            if (!edges.add(edge)) {
+                errors.add("Duplicate dependency " + dependency.getSourceName() + " -> " + dependency.getTargetName());
+            }
+        }
+        return Collections.unmodifiableList(errors);
+    }
+
+    /**
+     * The first dependency cycle found, given as the activities that close it
+     * with the repeated activity at both ends, or an empty list for a DAG.
+     *
+     * <p>Iterative depth-first search. {@code onPath} holds the activities on
+     * the current search path, so reaching one of those again closes a cycle;
+     * {@code visited} stops finished activities being explored twice. The
+     * explicit stack avoids recursing once per activity on deep plans.
+     */
+    syn lazy List<Activity> NetworkPlan.cyclePath() {
+        Set<Activity> visited = new LinkedHashSet<Activity>();
+        Set<Activity> onPath = new LinkedHashSet<Activity>();
+        List<Activity> path = new ArrayList<Activity>();
+        List<Integer> nextSuccessors = new ArrayList<Integer>();
+
+        for (Activity start : getActivityList()) {
+            if (!visited.add(start)) {
+                continue;
+            }
+            onPath.add(start);
+            path.add(start);
+            nextSuccessors.add(0);
+
+            while (!path.isEmpty()) {
+                int top = path.size() - 1;
+                Activity activity = path.get(top);
+                List<Activity> successors = activity.successors();
+                int next = nextSuccessors.get(top);
+                if (next >= successors.size()) {
+                    onPath.remove(activity);
+                    path.remove(top);
+                    nextSuccessors.remove(top);
+                    continue;
+                }
+
+                Activity successor = successors.get(next);
+                nextSuccessors.set(top, next + 1);
+                if (onPath.contains(successor)) {
+                    List<Activity> cycle = new ArrayList<Activity>(
+                        path.subList(path.indexOf(successor), path.size())
+                    );
+                    cycle.add(successor);
+                    return Collections.unmodifiableList(cycle);
+                }
+                if (visited.add(successor)) {
+                    onPath.add(successor);
+                    path.add(successor);
+                    nextSuccessors.add(0);
+                }
+            }
+        }
+        return Collections.emptyList();
+    }
+
+    syn lazy List<String> NetworkPlan.semanticErrors() {
+        List<String> errors = new ArrayList<String>(basicSemanticErrors());
+        if (getNumActivity() == 0
+                || hasAmbiguousActivityNames()
+                || hasUnresolvedDependencies()
+                || hasSelfDependencies()) {
+            return Collections.unmodifiableList(errors);
+        }
+
+        List<Activity> cycle = cyclePath();
+        if (!cycle.isEmpty()) {
+            List<String> names = new ArrayList<String>();
+            for (Activity activity : cycle) {
+                names.add(activity.getName());
+            }
+            errors.add("Dependency cycle detected: " + String.join(" -> ", names));
+            return Collections.unmodifiableList(errors);
+        }
+
+        if (sources().size() != 1) {
+            errors.add("Project must have exactly one source activity; found "+ joinActivityNames(sources()));
+        }
+        if (sinks().size() != 1) {
+            errors.add("Project must have exactly one terminal activity; found " + joinActivityNames(sinks()));
+        }
+        return Collections.unmodifiableList(errors);
+    }
+
+    private String NetworkPlan.joinActivityNames(List<Activity> activities) {
+        List<String> names = new ArrayList<String>();
+        for (Activity activity : activities) {
+            names.add(activity.getName());
+        }
+        return String.join(", ", names);
+    }
+}

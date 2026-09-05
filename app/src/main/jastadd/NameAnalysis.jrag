@@ -1,0 +1,24 @@
+import java.util.Collections;
+import java.util.LinkedHashMap;
+import java.util.Map;
+
+aspect NameAnalysis {
+    syn lazy Activity Dependency.source() = lookup(getSourceName());
+    syn lazy Activity Dependency.target() = lookup(getTargetName());
+    
+    inh Activity Dependency.lookup(String name);
+
+    eq NetworkPlan.getDependency(int i).lookup(String name) = lookupActivity(name);
+
+    syn lazy Activity NetworkPlan.lookupActivity(String name) = activityIndex().get(name);
+
+    syn lazy Map<String, Activity> NetworkPlan.activityIndex() {
+        Map<String, Activity> result = new LinkedHashMap<String, Activity>();
+        for (Activity activity : getActivityList()) {
+            if (!result.containsKey(activity.getName())) {
+                result.put(activity.getName(), activity);
+            }
+        }
+        return Collections.unmodifiableMap(result);
+    }
+}
