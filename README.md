@@ -67,3 +67,40 @@ Generated files are written under `results/` and are not tracked by git.
 | 1 | usage or file error |
 | 2 | parse error |
 | 3 | semantic errors |
+
+## Benchmarks
+
+Runtime and memory are measured with [JMH](https://github.com/openjdk/jmh). The
+benchmarks live in `app/src/jmh/java` and are not part of a normal build.
+
+```shell
+./gradlew :app:benchmark
+```
+
+That is the full run: five benchmarks, each repeated for five plan sizes (10 up
+to 10000 activities) and two plan shapes, which takes over an hour. For a short
+smoke run instead:
+
+```shell
+./gradlew :app:benchmark -Pquick
+```
+
+Either way the results land in `app/build/reports/jmh/results.json`.
+
+A much faster guard against performance and memory regressions runs on every
+build as part of the test suite, see `PerformanceRegressionTest`.
+
+### Charts
+
+The charts are drawn by a small Python script. It is packaged in a container,
+so nothing needs to be installed locally:
+
+```shell
+docker build -t network-plan-charts tools
+docker run --rm -v "$PWD:/work" network-plan-charts
+```
+
+PNG files are written to `results/`, which is not tracked by git. 
+
+On Linux, add `--user "$(id -u):$(id -g)"` to the `docker run` command so the
+generated files do not be owned by root.

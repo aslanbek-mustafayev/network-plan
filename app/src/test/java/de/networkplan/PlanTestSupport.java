@@ -57,4 +57,32 @@ final class PlanTestSupport {
         source.append("}\n");
         return parse(source.toString());
     }
+
+    /**
+     * A plan where A0 fans out to every middle activity and they all merge
+     * back into the last one. Unlike {@link #chainPlan(int)}, activities here
+     * have several predecessors and successors, so the analysis has to pick a
+     * maximum over parallel branches instead of walking a single line.
+     */
+    static NetworkPlan fanOutMergePlan(int activityCount) throws Exception {
+        StringBuilder source = new StringBuilder("project FanOutMerge {\n");
+        for (int index = 0; index < activityCount; index++) {
+            source.append("activity A")
+                .append(index)
+                .append(" duration 1;\n");
+        }
+        int sink = activityCount - 1;
+        for (int index = 1; index < sink; index++) {
+            source.append("dependency A0 -> A")
+                .append(index)
+                .append(";\n");
+            source.append("dependency A")
+                .append(index)
+                .append(" -> A")
+                .append(sink)
+                .append(";\n");
+        }
+        source.append("}\n");
+        return parse(source.toString());
+    }
 }

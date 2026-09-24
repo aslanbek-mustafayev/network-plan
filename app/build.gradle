@@ -22,8 +22,8 @@ dependencies {
     jflex 'de.jflex:jflex:1.9.1'
 
     // Beaver
-    beaverCompiler 'net.sf.beaver:beaver-cc:0.9.11' //Generates Java parser code from the grammar
-    implementation 'net.sf.beaver:beaver-rt:0.9.11' //Provides runtime for the generated parser
+    beaverCompiler 'net.sf.beaver:beaver-cc:0.9.11'
+    implementation 'net.sf.beaver:beaver-rt:0.9.11'
 
     // JastAdd
     jastaddCompiler 'org.jastadd:jastadd:2.4.0'
@@ -136,4 +136,62 @@ tasks.named('compileJava') {
     dependsOn tasks.named('generateLexer')
     dependsOn tasks.named('generateParser')
     dependsOn tasks.named('generateAst')
+}
+
+// Benchmarks live in src/jmh/java. Gradle compiles that folder on its own,
+// separately from the app and from the tests, because the name 'jmh' below
+// matches the folder name. They do NOT run during a normal build or on CI,
+// because a full run takes over an hour. PerformanceRegressionTest is the
+// quick check that does run on every build.
+sourceSets {
+    jmh {
+        compileClasspath += sourceSets.main.output + configurations.runtimeClasspath
+        runtimeClasspath += sourceSets.main.output + configurations.runtimeClasspath
+    }
+}
+
+// These two lines need their own block down here, and cannot be moved into
+// the main dependencies block near the top of the file. The name
+// 'jmhImplementation' is created by the sourceSets block just above, so higher
+// up the file it does not exist yet - the same problem as trying to use a
+// variable before declaring it.
+dependencies {
+    jmhImplementation 'org.openjdk.jmh:jmh-core:1.37'
+    jmhAnnotationProcessor 'org.openjdk.jmh:jmh-generator-annprocess:1.37'
+}
+
+// ./gradlew :app:benchmark           full run, every size and topology (heavy)
+// ./gradlew :app:benchmark -Pquick   smoke run, one size and topology (quick)
+tasks.register('benchmark', JavaExec) {
+    group = 'verification'
+    description = 'Runs CPM runtime and allocation benchmarks.'
+
+    classpath = sourceSets.jmh.runtimeClasspath
+    mainClass = 'org.openjdk.jmh.Main'
+
+    def quick = providers.gradleProperty('quick').isPresent()
+
+    // A quick run writes its own file, so that a rough run can never overwrite
+    // the results of a full one, which takes over an hour to produce.
+    def resultsName = quick ? 'results-quick.json' : 'results.json'
+    def resultsFile = layout.buildDirectory.file("reports/jmh/$resultsName").get().asFile
+
+    args '-f', '1'                          // use 1 brand new JVM per benchmark, so that an
+                                            // earlier benchmark cannot make a later one look fast
+    args '-prof', 'gc'                      // also measure memory: bytes allocated per call
+    args '-rf', 'json'                      // write the results as JSON...
+    args '-rff', resultsFile.absolutePath   // ...into this file
+    args '-wi', quick ? '1' : '3'           // practice rounds, results thrown away. Java code
+                                            // starts slow and speeds up as it keeps running, so
+                                            // we let it reach full speed before measuring
+    args '-i', quick ? '1' : '5'            // real rounds, these are the numbers we report
+    if (quick) {
+        // Still every size and every shape, otherwise there is no curve to draw,
+        // just far shorter rounds: 2 seconds each instead of the default 10.
+        args '-r', '2'
+    }
+
+    doFirst {
+        resultsFile.parentFile.mkdirs()
+    }
 }

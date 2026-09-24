@@ -1,0 +1,98 @@
+#cloud-config
+# Prepares a fresh Ubuntu server (24.04 or newer) for running the JMH benchmarks.
+# Paste this file into the "Cloud config" field when creating the server.
+#
+# It does NOT clone the repository. After the server is up:
+#
+#   ssh aslan@<server-ip>
+#   cloud-init status --wait        # wait until this setup has finished
+#   git clone https://github.com/aslanbek-mustafayev/bachelor_code.git
+#   cd bachelor_code
+#   tmux new -s bench
+#   bench-run -Pquick               # smoke run, a few minutes
+#   bench-run                       # full run, over an hour
+#
+# Add your SSH key when creating the server: password login is switched off.
+# Every key selected there works for both root and aslan.
+
+timezone: Europe/Berlin
+ssh_pwauth: false
+
+users:
+  - default                   # keep the image's own setup, so root login still works
+  - name: aslan
+    groups: sudo
+    shell: /bin/bash
+    # aslan has no password (only SSH keys), so sudo must not ask for one
+    sudo: ALL=(ALL) NOPASSWD:ALL
+
+package_update: true
+package_upgrade: true
+packages:
+  - openjdk-21-jdk-headless   # the project's toolchain asks for Java 21
+  - git
+  - tmux                      # keeps the run going if the SSH connection drops
+  - htop
+
+write_files:
+  - path: /usr/local/bin/bench-run
+    permissions: '0755'
+    content: |
+      #!/bin/bash
+      # Runs the JMH benchmarks and stores a description of this machine next
+      # to the results, so the numbers can be traced back to the hardware and
+      # JDK they were measured on. Run it from the repository root, in tmux.
+      # Any arguments are passed on to Gradle, e.g. bench-run -Pquick
+      set -euo pipefail
+
+      [ -x ./gradlew ] || { echo "Run this from the repository root." >&2; exit 1; }
+      [ -n "${TMUX:-}" ] || echo "Warning: not inside tmux, a dropped SSH connection will stop the run." >&2
+
+      out=app/build/reports/jmh
+      mkdir -p "$out"
+      {
+        echo "date:   $(date -Is)"
+        echo "commit: $(git rev-parse HEAD)$(git diff --quiet || echo ' (with uncommitted changes)')"
+        echo "args:   $*"
+        echo
+        java -version 2>&1
+        echo
+        lscpu
+        echo
+        free -h
+        echo
+        uname -a
+        grep PRETTY_NAME /etc/os-release
+      } > "$out/machine.txt"
+
+      # Gradle would otherwise be allowed to download its own JDK. Forbidding
+      # that means the benchmarks always run on the installed JDK, whose exact
+      # version is written to machine.txt above.
+      ./gradlew --no-daemon -Porg.gradle.java.installations.auto-download=false \
+        :app:benchmark "$@" 2>&1 | tee "$out/benchmark-$(date +%H%M).log"
+      echo
+      echo "Done. Copy the results to your own machine with:"
+      echo "  scp -r $(whoami)@$(hostname -I | awk '{print $1}'):$PWD/$out ."
+
+  - path: /etc/motd
+    content: |
+
+      Benchmark server. See the top of tools/cloud-init.yaml for the steps:
+        cloud-init status --wait, clone, tmux new -s bench, bench-run
+      Delete this server when you are done, a stopped server is still billed.
+
+runcmd:
+  # The SSH keys selected in the Hetzner console are only given to root.
+  # Copy them, so the same keys also log in as aslan.
+  - install -d -m 700 -o aslan -g aslan /home/aslan/.ssh
+  - install -m 600 -o aslan -g aslan /root/.ssh/authorized_keys /home/aslan/.ssh/authorized_keys
+
+  # Background jobs that can wake up in the middle of a run and take CPU time
+  # away from the benchmark. They are not needed on a server that lives for a
+  # day. Units that do not exist on this image are skipped.
+  - systemctl disable --now apt-daily.timer apt-daily-upgrade.timer || true
+  - systemctl disable --now unattended-upgrades.service || true
+  - systemctl disable --now man-db.timer fstrim.timer motd-news.timer || true
+  - systemctl disable --now snapd.service snapd.socket snapd.seeded.service || true
+
+final_message: "Benchmark server ready after $UPTIME seconds."
