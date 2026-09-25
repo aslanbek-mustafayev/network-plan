@@ -70,6 +70,8 @@ public final class App {
 
         if (visualizationPath != null) {
             try {
+                Path parent = visualizationPath.toAbsolutePath().getParent();
+                Files.createDirectories(parent);
                 Files.writeString(
                     visualizationPath,
                     new NetworkPlanHtmlRenderer().render(plan),
