@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# This script was developed with assistance from OpenAI's ChatGPT LLM.
 """
 Draws charts from the JMH benchmark results.
 
